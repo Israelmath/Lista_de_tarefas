@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'dart:io';
-
+import 'dart:math';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:lista_tarefas/dao/dao_json.dart';
+
 
 void main() {
   runApp(
@@ -25,7 +26,23 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  List _toDoList = List();
+  final TextEditingController _newToDo = TextEditingController();
+  final TaskDAO _dao = TaskDAO();
+  List<Map<String, dynamic>> _toDoList = List();
+
+  Map<String, dynamic> _lastRemoved = Map();
+  int _lastRemovedPos;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _dao.readData().then((data) {
+      setState(() {
+        _toDoList = json.decode(data);
+      });
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,11 +55,12 @@ class _HomeState extends State<Home> {
         children: <Widget>[
           Container(
             padding:
-            EdgeInsets.only(left: 17.0, top: 1.0, right: 7.0, bottom: 1.0),
+                EdgeInsets.only(left: 17.0, top: 1.0, right: 7.0, bottom: 1.0),
             child: Row(
               children: <Widget>[
                 Expanded(
                   child: TextField(
+                    controller: _newToDo,
                     decoration: InputDecoration(
                       labelText: 'Nova tarefa',
                       labelStyle: TextStyle(
@@ -55,10 +73,24 @@ class _HomeState extends State<Home> {
                   padding: const EdgeInsets.only(left: 5.0),
                   child: RaisedButton(
                     child: Text('Adicionar'),
-                    onPressed: () {},
+                    onPressed: () {
+                      _addToDo(_newToDo);
+                      _newToDo.text = '';
+                      _dao.saveData(_toDoList);
+                    },
                   ),
-                )
+                ),
               ],
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView.builder(
+                padding: EdgeInsets.only(top: 10),
+                itemCount: _toDoList.length,
+                itemBuilder: buildItems,
+              ),
             ),
           ),
         ],
@@ -66,24 +98,93 @@ class _HomeState extends State<Home> {
     );
   }
 
-  Future<File> _getFile() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File("${dir.path}/data.json");
+  Widget buildItems(BuildContext context, int index) {
+    return Dismissible(
+      key: Key(Random().nextInt(1000).toString()),
+      direction: DismissDirection.startToEnd,
+      onDismissed: (direction) {
+        setState(() {
+          _lastRemoved = Map.from(_toDoList[index]);
+          _lastRemovedPos = index;
+          _toDoList.removeAt(index);
+          _dao.saveData(_toDoList);
+        });
+        final snack = SnackBar(
+          duration: Duration(seconds: 5),
+          content: Text('A tarefa ${_lastRemoved['title']} for removida'),
+          action: SnackBarAction(
+            label: 'Desfazer',
+            onPressed: () {
+              setState(() {
+                _toDoList.insert(_lastRemovedPos, _lastRemoved);
+                _dao.saveData(_toDoList);
+              });
+            },
+          ),
+        );
+        Scaffold.of(context).removeCurrentSnackBar();
+        Scaffold.of(context).showSnackBar(snack);
+      },
+      background: Container(
+        color: Colors.red,
+        child: Align(
+          alignment: Alignment(-0.9, 0.0),
+          child: Icon(
+            Icons.delete,
+            color: Colors.white,
+          ),
+        ),
+      ),
+      child: CheckboxListTile(
+        value: _toDoList[index]['ok'],
+        title: Text(
+          _toDoList[index]['title'],
+          style: TextStyle(
+            color: !_toDoList[index]['ok'] ? Colors.black : Colors.grey[500],
+          ),
+        ),
+        secondary: CircleAvatar(
+          foregroundColor:
+              _toDoList[index]['ok'] ? Colors.blue : Colors.blue[300],
+          child: Icon(
+            _toDoList[index]['ok'] ? Icons.check : Icons.error,
+            color: Colors.white,
+          ),
+        ),
+        onChanged: (check) {
+          setState(() {
+            _toDoList[index]['ok'] = check;
+            _refresh();
+            _dao.saveData(_toDoList);
+          });
+        },
+      ),
+    );
   }
 
-  Future<File> _saveData() async {
-    String data = json.encode(_toDoList);
+  Future<Null> _refresh() async {
+//    await Future.delayed(Duration(seconds: 1));
 
-    final file = await _getFile();
-    return file.writeAsString(data);
+    setState(() {
+      _toDoList.sort((map1, map2) {
+        if (map1['ok'] && !map2['ok']) {
+          return 1;
+        } else if (map1['ok'] && map2['ok']) {
+          return 0;
+        } else
+          return -1;
+      });
+    });
+    return null;
   }
 
-  Future<String> _readData() async {
-    try {
-      final file = await _getFile();
-      return file.readAsString();
-    } catch (e) {
-      return null;
-    }
+  void _addToDo(TextEditingController _new) {
+    setState(() {
+      Map<String, dynamic> _newMap = Map();
+      _newMap['title'] = _new.text;
+      _newMap['ok'] = false;
+      _toDoList.add(_newMap);
+    });
   }
 }
+
